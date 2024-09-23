@@ -1,0 +1,19 @@
+# files
+*.pyc
+*.ipynb_checkpoints
+.DS_Store
+.env
+
+# folders
+.pytest_cache/
+.vscode/
+_build/
+_pycache_/
+build/
+dist/
+files/
+storage/
+
+# exceptions
+!files/.gitkeep
+!storage/.gitkeep

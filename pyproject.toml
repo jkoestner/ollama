@@ -1,0 +1,111 @@
+[build-system]
+requires = ["setuptools>=62.6"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "osllmh"
+description = "open source llm helper"
+dynamic = ["version"]
+authors = [{ name = "John Koestner", email = "johnkoestner@outlook.com" }]
+readme = 'README.md'
+license = { file = 'LICENSE.md' }
+requires-python = '>=3.8'
+
+dependencies = [
+    "EbookLib>=0.18",
+    "html2text>=2024.2.26",
+    "llama-index>=0.11.11",
+]
+
+[project.urls]
+homepage = "https://github.com/jkoestner/osllmh"
+repository = 'https://github.com/jkoestner/osllmh'
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["osllmh"]
+
+[tool.setuptools.dynamic]
+version = { attr = "osllmh.version.version" }
+
+[tool.ruff]
+line-length = 88
+fix = false
+unfixable = []
+extend-include = ["*.ipynb"]
+
+select = [
+    # pyflakes
+    "F",
+    # pycodestyle
+    "E",
+    "W",
+    # isort
+    "I",
+    # pydocstyle
+    "D",
+    # flake8-2020
+    "YTT",
+    # flake8-bugbear
+    "B",
+    # flake8-quotes
+    "Q",
+    # flake8-debugger
+    "T10",
+    # flake8-gettext
+    "INT",
+    # pylint
+    "PL",
+    # misc lints
+    "PIE",
+    # flake8-pyi
+    "PYI",
+    # tidy imports
+    "TID",
+    # implicit string concatenation
+    "ISC",
+    # type-checking imports
+    "TCH",
+    # comprehensions
+    "C4",
+    # pygrep-hooks
+    "PGH",
+    # Ruff-specific rules
+    "RUF",
+    # flake8-bandit: exec-builtin
+    "S102",
+    # numpy-legacy-random
+    "NPY002",
+    # Perflint
+    "PERF",
+    # flynt
+    "FLY",
+    # flake8-logging-format
+    "G",
+]
+
+ignore = [
+    ### Intentionally disabled
+    # logging statement uses f-string
+    "G004",
+    # ignore __init__ docstring
+    "D107",
+    # these are conflicting errors
+    "D203",
+    "D212",
+    # ignore == False vs is False due to pandas series
+    "E712",
+    "ISC001",
+    # ignore magic numbers
+    "PLR2004",
+    # ignore too many return statements or branches
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+]
+
+[tool.ruff.lint]
+exclude = ["*.ipynb"]
+pylint.max-args = 10
