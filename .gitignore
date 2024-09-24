@@ -15,6 +15,5 @@ files/
 storage/
 osllmh.egg-info/
 
-# exceptions
-!files/.gitkeep
-!storage/.gitkeep
+# include below even though they are excluded above
+!.gitkeep

@@ -7,11 +7,19 @@
 #   `docker build --build-arg BRANCH_NAME=dev --no-cache -t osllmh .`
 #
 # alpine was used instead of slim because of the no need of numpy
-FROM python:3.9-alpine
+# FROM python:3.9-alpine
+
+# # Install dependencies, git
+# RUN apk update && \
+#     apk add --no-cache git bash build-base libffi-dev openssl-dev
+
+FROM python:3.9-slim
 
 # Install dependencies, git
-RUN apk update && \
-    apk add --no-cache git bash build-base libffi-dev openssl-dev
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
