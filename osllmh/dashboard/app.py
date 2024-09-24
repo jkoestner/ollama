@@ -20,7 +20,7 @@ from dash_extensions.enrich import (
     DashProxy,
     Input,
     Output,
-    ServersideOutputTransform,
+    # ServersideOutputTransform,
     callback,
     dcc,
     html,
@@ -48,7 +48,7 @@ app = DashProxy(
         dbc_css,
         dbc.themes.QUARTZ,
     ],
-    transforms=[ServersideOutputTransform()],
+    # transforms=[ServersideOutputTransform()],
 )
 server = app.server
 app.config.suppress_callback_exceptions = True
