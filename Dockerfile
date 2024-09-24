@@ -10,10 +10,8 @@
 FROM python:3.9-alpine
 
 # Install dependencies, git
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends git && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk update && \
+    apk add --no-cache git bash build-base libffi-dev openssl-dev
 
 # Copy uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
