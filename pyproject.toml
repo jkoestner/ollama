@@ -29,7 +29,7 @@ repository = 'https://github.com/jkoestner/osllmh'
 include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["osllmh"]
+exclude = ["tests*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "osllmh.version.version" }
