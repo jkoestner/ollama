@@ -36,7 +36,7 @@ dev = [
 ]
 
 [project.scripts]
-morai = "osllmh.utils.cli:cli" # the entry points provide console scripts at command line
+osllmh = "osllmh.utils.cli:cli" # the entry points provide console scripts at command line
 
 [project.urls]
 homepage = "https://github.com/jkoestner/osllmh"

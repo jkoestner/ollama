@@ -19,7 +19,7 @@ from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
 
-dash.register_page(__name__, path="/setup", title="osllmh - Setup", order=1)
+dash.register_page(__name__, path="/", title="osllmh - Setup", order=1)
 
 #   _                            _
 #  | |    __ _ _   _  ___  _   _| |_

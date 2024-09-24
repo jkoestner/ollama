@@ -21,6 +21,11 @@ from osllmh.utils import custom_logger
 logger = custom_logger.setup_logging(__name__)
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
+OSLLMH_INPUTS_PATH = (
+    Path(os.getenv("OSLLMH_INPUTS_PATH"))
+    if os.getenv("OSLLMH_INPUTS_PATH")
+    else ROOT_PATH
+)
 
 
 class Engine:
@@ -51,11 +56,11 @@ class Engine:
         """
         # initiate the directories
         if files_dir is None:
-            self.files_dir = os.path.join(ROOT_PATH, "files")
+            self.files_dir = os.path.join(OSLLMH_INPUTS_PATH, "files")
         else:
             self.files_dir = files_dir
         if storage_dir is None:
-            self.storage_dir = os.path.join(ROOT_PATH, "storage")
+            self.storage_dir = os.path.join(OSLLMH_INPUTS_PATH, "storage")
         else:
             self.storage_dir = storage_dir
         if settings:
