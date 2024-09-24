@@ -21,12 +21,28 @@ dependencies = [
     "llama-index>=0.11.11",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "black>=23.12.1",
+    "isort>=5.13.2",
+    "jupyterlab-code-formatter>=2.2.1",
+    "jupyter-resource-usage>=1.0.1",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.11",
+    "sphinx>=6.0, <7.2",
+    "sphinx_rtd_theme>=1.2.2",
+]
+
+[project.scripts]
+morai = "osllmh.utils.cli:cli" # the entry points provide console scripts at command line
+
 [project.urls]
 homepage = "https://github.com/jkoestner/osllmh"
 repository = 'https://github.com/jkoestner/osllmh'
 
 [tool.setuptools]
-include-package-data = false
+include-package-data = true # include files from MANIFEST.in
 
 [tool.setuptools.packages.find]
 exclude = ["tests*"]
