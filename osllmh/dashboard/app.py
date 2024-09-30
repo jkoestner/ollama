@@ -20,13 +20,12 @@ from dash_extensions.enrich import (
     DashProxy,
     Input,
     Output,
-    # ServersideOutputTransform,
     callback,
     dcc,
     html,
 )
 
-from osllmh.dashboard.components import engine_store
+from osllmh.dashboard.components import dash_store
 from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
@@ -48,7 +47,6 @@ app = DashProxy(
         dbc_css,
         dbc.themes.QUARTZ,
     ],
-    # transforms=[ServersideOutputTransform()],
 )
 server = app.server
 app.config.suppress_callback_exceptions = True
@@ -128,9 +126,9 @@ def update_status_div(pathname, settings):
     """Update loaded status on page refresh."""
     logger.debug("checking the engine status")
     engine_loaded = (
-        "engine not loaded" if engine_store.engine_instance is None else "engine loaded"
+        "engine not loaded" if dash_store.engine_instance is None else "engine loaded"
     )
-    badge_color = "success" if engine_store.engine_instance is not None else "secondary"
+    badge_color = "success" if dash_store.engine_instance is not None else "secondary"
 
     status_div = html.H6(
         [dbc.Badge(engine_loaded, className="ms-1", color=badge_color)]

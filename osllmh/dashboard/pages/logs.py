@@ -11,7 +11,7 @@ from dash_extensions.enrich import (
     html,
 )
 
-from osllmh.dashboard.components import engine_store
+from osllmh.dashboard.components import dash_store
 from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
@@ -35,7 +35,15 @@ def layout():
                 [
                     dbc.CardHeader("Query Logs"),
                     dbc.CardBody(
-                        [html.Pre(id="log-contents", style={"whiteSpace": "pre-wrap"})]
+                        [
+                            html.Pre(
+                                id="log-contents",
+                                style={
+                                    "whiteSpace": "pre-wrap",
+                                    "border": "1px solid #333333",
+                                },
+                            )
+                        ]
                     ),
                 ]
             ),
@@ -57,10 +65,10 @@ def layout():
 )
 def display_logs(pathname):
     """Display logs."""
-    if engine_store.engine_instance is None:
+    if dash_store.engine_instance is None:
         return "No logs found."
     else:
-        e = engine_store.engine_instance
+        e = dash_store.engine_instance
         log_file_path = e.log_file_path
         logger.debug(f"Log file path: {log_file_path}")
         if os.path.exists(log_file_path):

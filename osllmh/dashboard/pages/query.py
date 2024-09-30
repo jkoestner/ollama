@@ -1,5 +1,7 @@
 """Query dashboard."""
 
+import json
+
 import dash_bootstrap_components as dbc
 import dash_extensions.enrich as dash
 from dash_extensions.enrich import (
@@ -10,7 +12,7 @@ from dash_extensions.enrich import (
     html,
 )
 
-from osllmh.dashboard.components import engine_store
+from osllmh.dashboard.components import dash_store
 from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
@@ -39,7 +41,11 @@ def layout():
                             dbc.Textarea(
                                 id="query-input",
                                 placeholder="Type your query here...",
-                                style={"width": "100%", "height": 100},
+                                style={
+                                    "width": "100%",
+                                    "height": 100,
+                                    "border": "1px solid #333333",
+                                },
                             ),
                             dbc.Button(
                                 "Submit Query",
@@ -50,7 +56,28 @@ def layout():
                             html.Div(
                                 id="query-response",
                                 className="mt-4",
-                                style={"whiteSpace": "pre-wrap"},
+                                style={
+                                    "whiteSpace": "pre-wrap",
+                                    "border": "1px solid #333333",
+                                },
+                            ),
+                        ]
+                    ),
+                ],
+                className="mb-2",
+            ),
+            dbc.Card(
+                [
+                    dbc.CardHeader("Response Meta"),
+                    dbc.CardBody(
+                        [
+                            html.Div(
+                                id="response-meta",
+                                className="mt-4",
+                                style={
+                                    "whiteSpace": "pre-wrap",
+                                    "border": "1px solid #333333",
+                                },
                             ),
                         ]
                     ),
@@ -70,6 +97,7 @@ def layout():
 
 @callback(
     Output("query-response", "children"),
+    Output("response-meta", "children"),
     Input("submit-query-button", "n_clicks"),
     State("query-input", "value"),
     prevent_initial_call=True,
@@ -78,6 +106,9 @@ def submit_query(n_clicks, query_text):
     """Submit query to engine."""
     if n_clicks is None or not query_text:
         return dash.no_update
-    e = engine_store.engine_instance
+    e = dash_store.engine_instance
     response = e.query(query_text)
-    return response.response
+    dash_store.response_instance = response
+    response_meta = json.dumps(response.meta, indent=4)
+
+    return response.response, response_meta

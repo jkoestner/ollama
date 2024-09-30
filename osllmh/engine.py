@@ -1,4 +1,17 @@
-"""Generic Helper Functions for LLM."""
+"""
+Generic Helper Functions for LLM.
+
+The process is to:
+  - Create an Engine object.
+    - The engine object is initiated with parameters
+  - Update the index with new documents by using a vector store and
+    creates storage context.
+    - The documents are read from a directory with a number of parameters
+  - Query the index with a question.
+    - The index are retrieved from a vector store
+    - The response is then post-processed
+
+"""
 
 import datetime
 import json
@@ -12,6 +25,7 @@ from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
+    constants,
     load_index_from_storage,
 )
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
@@ -40,7 +54,7 @@ class Engine:
         e.delete_index()
     """
 
-    def __init__(self, files_dir=None, storage_dir=None, settings=True):
+    def __init__(self, files_dir=None, storage_dir=None, load_settings=True):
         """
         Initialize the engine.
 
@@ -50,10 +64,15 @@ class Engine:
             Directory where the documents are stored.
         storage_dir : str
             Directory where the index will be persisted.
-        settings : bool
+        load_settings : bool
             Whether to load settings from a file.
 
         """
+        # initiate the variables
+        self.index = None
+        self.query_engine = None
+        self.query_log = []
+
         # initiate the directories
         if files_dir is None:
             self.files_dir = os.path.join(OSLLMH_INPUTS_PATH, "files")
@@ -63,8 +82,11 @@ class Engine:
             self.storage_dir = os.path.join(OSLLMH_INPUTS_PATH, "storage")
         else:
             self.storage_dir = storage_dir
-        if settings:
+        if load_settings:
             self.load_settings()
+        else:
+            self.settings = self.get_settings()
+        self._check_settings()
 
         self.index_dir = os.path.join(self.storage_dir, "index")
 
@@ -73,19 +95,15 @@ class Engine:
             with open(self.log_file_path, "w") as f:
                 f.write("--- Query Log ---\n")
 
-        # initiate the variables
-        self.index = None
-        self.query_engine = None
-        self.query_log = []
-
         # create the engine
         self.token_counter = self._setup_tokenizer()
-        self.create_index()
-        self.create_query_engine()
+        self.create_or_load_index()
 
-    def create_index(self):
+    def create_or_load_index(self):
         """
         Create the index.
+
+        by default the vectorstore is a simple in memory store.
 
         Returns
         -------
@@ -93,30 +111,88 @@ class Engine:
             The index object.
 
         """
-        if not os.path.exists(self.index_dir):
-            logger.info("No existing index found. Creating a new index...")
-            # Load documents and create a new index
-            documents = SimpleDirectoryReader(self.files_dir).load_data()
-            self.index = VectorStoreIndex.from_documents(documents)
-            # Persist the index for future use
-            self.index.storage_context.persist(persist_dir=self.index_dir)
-            logger.info("Index created and persisted.")
+        # create index
+        if not os.path.exists(os.path.join(self.index_dir, "docstore.json")):
+            self.update_index(files_dir=self.files_dir)
+        # load index
         else:
-            logger.info("Loading index from storage...")
-            # Load the existing index from storage
             storage_context = StorageContext.from_defaults(persist_dir=self.index_dir)
             self.index = load_index_from_storage(storage_context)
             logger.info("Index loaded from storage.")
+            self.create_query_engine()
+
+    def update_index(self, files_dir=None):
+        """
+        Update the index with new documents, supporting recursive directory traversal.
+
+        Parameters
+        ----------
+        files_dir : str (optional)
+            New directory containing documents.
+
+        """
+        if files_dir:
+            update_dir = files_dir
+        else:
+            update_dir = self.files_dir
+
+        logger.info(f"Updating index with new documents from {update_dir}...")
+        documents = SimpleDirectoryReader(update_dir, recursive=True).load_data()
+        unique_files = set()
+
+        # create new index if doesn't exist
+        if not os.path.exists(os.path.join(self.index_dir, "docstore.json")):
+            logger.info("No existing index found. Creating a new index...")
+            for document in documents:
+                doc_file_path = document.metadata.get("file_path", None)
+                if doc_file_path not in unique_files:
+                    unique_files.add(doc_file_path)
+            logger.info(f"Found {len(unique_files)} new documents.")
+            self.index = VectorStoreIndex.from_documents(documents)
+        # load existing index and add new documents
+        else:
+            logger.info("Loading existing index from storage...")
+            storage_context = StorageContext.from_defaults(persist_dir=self.index_dir)
+            self.index = load_index_from_storage(storage_context)
+            existing_files = self.list_files_from_index()
+            existing_file_paths = {
+                file_info["file_path"] for file_info in existing_files
+            }
+
+            # filter out documents that are already in the index
+            new_documents = []
+            for document in documents:
+                doc_file_path = document.metadata.get("file_path", None)
+                if doc_file_path and doc_file_path not in existing_file_paths:
+                    new_documents.append(document)
+                    if doc_file_path not in unique_files:
+                        unique_files.add(doc_file_path)
+
+            logger.info(f"Adding {len(unique_files)} new documents to the index...")
+            for document in new_documents:
+                self.index.insert(document)
+
+        # Persist the updated index for future use
+        self.index.storage_context.persist(persist_dir=self.index_dir)
+        logger.info("Index updated and persisted.")
+        self.create_query_engine()
 
     def create_query_engine(self, **kwargs):
         """
         Create the query engine from the index.
+
+        link:
+          - https://github.com/run-llama/llama_index/blob/main/llama-index-core/llama_index/core/constants.py
+          - https://docs.llamaindex.ai/en/stable/api_reference/
+          - https://docs.llamaindex.ai/en/stable/api_reference/retrievers/vector/#llama_index.core.retrievers.VectorIndexRetriever.similarity_top_k
+          - https://docs.llamaindex.ai/en/stable/module_guides/querying/node_postprocessors/node_postprocessors/
 
         Parameters
         ----------
         kwargs : dict
             Additional keyword arguments to pass to the query engine.
                - similarity_top_k : int
+                - node_postprocessors : list
 
         Returns
         -------
@@ -124,9 +200,17 @@ class Engine:
             The query engine object.
 
         """
+        if kwargs is None:
+            kwargs = {}
+        logger.info("Creating query engine...")
+
+        if "similarity_top_k" not in kwargs:
+            kwargs["similarity_top_k"] = self.settings["engine"]["nodes_similar"]
+        if "node_postprocessors" not in kwargs:
+            kwargs["node_postprocessors"] = None
         self.query_engine = self.index.as_query_engine(**kwargs)
 
-    def query(self, question):
+    def query(self, question, reset=True):
         """
         Query the index with the given question.
 
@@ -134,10 +218,12 @@ class Engine:
         ----------
         question : str
             The question to query the index with.
+        reset : bool (optional)
+            Whether to reset the tokenizer token counts.
 
         Returns
         -------
-        repsonse : str
+        query_response : QueryResponse
             The response from the query engine.
 
         """
@@ -147,27 +233,15 @@ class Engine:
         # log the query
         self._log_query(question, response.response, token_usage)
 
-        return response
+        query_response = QueryResponse(
+            full_response=response,
+            token_usage=token_usage,
+        )
 
-    def update_index(self, new_files_dir=None):
-        """
-        Update the index with new documents.
+        if reset:
+            self.reset_tokenizer()
 
-        Parameters
-        ----------
-        new_files_dir : str (optional)
-            New directory containing documents.
-
-        """
-        if new_files_dir:
-            update_dir = new_files_dir
-        else:
-            update_dir = self.files_dir
-        logger.info(f"Updating index with new documents from {update_dir}...")
-        documents = SimpleDirectoryReader(update_dir).load_data()
-        self.index = VectorStoreIndex.from_documents(documents)
-        self.index.storage_context.persist(persist_dir=self.index_dir)
-        logger.info("Index updated and persisted.")
+        return query_response
 
     def delete_index(self):
         """Delete the persisted index from storage."""
@@ -181,6 +255,48 @@ class Engine:
             logger.info("Index deleted.")
         else:
             logger.info("No index found to delete.")
+
+    def list_files_from_index(self):
+        """
+        List the documents stored in the index.
+
+        Returns
+        -------
+        files_info : list
+            A list of file names stored in the index.
+
+        """
+        if not self.index:
+            logger.warning(
+                "Index not loaded or created. Please create or load the index first."
+            )
+            return []
+
+        # Access the document store from the storage context
+        storage_context = self.index.storage_context
+        document_store = storage_context.docstore
+
+        # Get all document objects
+        all_documents = document_store.docs
+
+        seen_files = set()
+
+        files_info = []
+        for doc_id, doc in all_documents.items():
+            # Get file name and path from metadata, with fallback to doc_id
+            # for missing fields
+            file_name = doc.metadata.get("file_name", f"Unknown file ({doc_id})")
+            file_path = doc.metadata.get("file_path", "Path not available")
+
+            # Create a tuple to uniquely identify the file by its name and path
+            file_identifier = (file_name, file_path)
+
+            # Only add if the file hasn't been seen before
+            if file_identifier not in seen_files:
+                files_info.append({"file_name": file_name, "file_path": file_path})
+                seen_files.add(file_identifier)
+
+        return files_info
 
     def get_settings(self, save=False):
         """
@@ -203,6 +319,15 @@ class Engine:
             The settings of the engine.
 
         """
+        # check user settings
+        if self.settings.get("engine", None) is None:
+            node_similar = constants.DEFAULT_SIMILARITY_TOP_K
+        else:
+            node_similar = self.settings["engine"].get(
+                "nodes_similar", constants.DEFAULT_SIMILARITY_TOP_K
+            )
+
+        # get the package settings
         settings = {
             "llm": {
                 "model": Settings.llm.model,
@@ -220,6 +345,7 @@ class Engine:
                 "context_window": Settings.context_window,
                 "num_output": Settings.num_output,
             },
+            "engine": {"nodes_similar": node_similar},
         }
 
         if save:
@@ -277,15 +403,41 @@ class Engine:
         Settings.context_window = settings["prompt_helper"]["context_window"]
         Settings.num_output = settings["prompt_helper"]["num_output"]
 
+        self.settings = settings
+
+        if self.index is not None:
+            self.create_query_engine()
+
         return settings
+
+    def _check_settings(self):
+        """Check the current settings of the engine."""
+        settings = self.get_settings()
+        needed_settings = [
+            "llm",
+            "embed_model",
+            "text_splitter",
+            "prompt_helper",
+            "engine",
+        ]
+        missing_settings = [key for key in settings if key not in needed_settings]
+        if missing_settings:
+            raise ValueError(
+                f"Settings missing: {missing_settings}. Please update the settings."
+            )
 
     def reset_tokenizer(self):
         """Reset the tokenizer for the engine."""
         self.token_counter.reset_counts()
 
-    def get_token_counts(self):
+    def get_token_counts(self, reset=True):
         """
         Get the token counts from the tokenizer.
+
+        Parameters
+        ----------
+        reset : bool (optional)
+            Whether to reset the tokenizer token counts.
 
         Returns
         -------
@@ -299,6 +451,10 @@ class Engine:
             "llm_completion_tokens": self.token_counter.completion_llm_token_count,
             "total_tokens": self.token_counter.total_llm_token_count,
         }
+
+        if reset:
+            self.token_counter.reset_counts()
+
         return token_counts
 
     def _setup_tokenizer(self):
@@ -325,18 +481,117 @@ class Engine:
             The token usage from the query.
 
         """
-        log_entry = {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "query": query,
-            "response": response,
-            "token_usage": token_usage,
-        }
-        with open(self.log_file_path, "a") as log_file:
-            log_file.write(f"Timestamp: {log_entry['timestamp']}\n")
-            log_file.write(f"Query: {log_entry['query']}\n")
-            log_file.write(f"Response: {log_entry['response']}\n")
-            log_file.write(f"Token Usage: {log_entry['token_usage']}\n")
-            log_file.write("\n---\n")  # Separator between entries
+        # read
+        with open(self.log_file_path, "r") as log_file:
+            existing_log = log_file.read()
+
+        # create log
+        new_log = (
+            f"Timestamp: {datetime.datetime.now().isoformat()}\n"
+            f"Query: {query}\n"
+            f"Response: {response}\n"
+            f"Token Usage: {token_usage}\n"
+            "---\n"  # Separator between entries
+        )
+
+        # prepend
+        with open(self.log_file_path, "w") as log_file:
+            log_file.write(new_log + existing_log)
+
+
+class QueryResponse:
+    """QueryResponse is a wrapper for the response from the query engine."""
+
+    def __init__(self, full_response, token_usage=None):
+        """
+        Initialize the QueryResponse object with attributes.
+
+        Parameters
+        ----------
+        full_response : object
+            The full response object returned by the query engine.
+        token_usage : dict
+            The token usage from the query.
+
+        """
+        self.response = full_response.response
+        self.meta = self.response_meta(full_response)
+        self.token_usage = token_usage
+        self.full_response = full_response
+
+    def __repr__(self):
+        """Return a string representation of the QueryResponse object."""
+        return (
+            f"QueryResponse"
+            f"(response='{self.response[:30]}...', "
+            f"meta={len(self.meta)} items)"
+        )
+
+    def response_meta(self, response):
+        """
+        Get the metadata of the response.
+
+        Parameters
+        ----------
+        response : str
+            The response from the query engine.
+
+        Returns
+        -------
+        meta : list
+            The metadata of the response.
+
+        """
+        meta = []
+        for node in response.source_nodes:
+            item = {
+                "source": node.node.metadata.get("file_name", "Unknown file"),
+                "ref_doc_id": node.node.ref_doc_id,
+                "score": node.score,
+                # assuming 3000 characters per page
+                "approx_page": node.node.start_char_idx / 3000,
+                "page": node.node.metadata.get("page_label", None),
+                "start_char": node.node.start_char_idx,
+                "text": node.node.text[:200],
+                "break": "----------------",
+            }
+            meta.append(item)
+
+        logger.info(f"metadata for {len(meta)} sources")
+
+        return meta
+
+    def get_node(self, ref_doc_id=None, node_idx=None):
+        """
+        Get the node from the response.
+
+        Parameters
+        ----------
+        ref_doc_id : str
+            The ref_doc_id to retrieve.
+        node_idx : int
+            The index of the item to retrieve.
+
+        Returns
+        -------
+        node : object
+            The node object from the response.
+
+        """
+        nodes = self.full_response.source_nodes
+
+        if (ref_doc_id is None and node_idx is None) or (ref_doc_id and node_idx):
+            logger.warning("Please provide either ref_doc_id or node_idx.")
+            return None
+        elif ref_doc_id and not node_idx:
+            for node in nodes:
+                # Check if the node id matches the target_node_id
+                if node.node.ref_doc_id == ref_doc_id:
+                    return node.node
+        elif node_idx and not ref_doc_id:
+            return nodes[node_idx].node
+
+        return None
 
 
 # Example usage

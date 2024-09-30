@@ -4,6 +4,8 @@ Simple helper for the llama index project.
 ## Overview
 This is a simple helper for the llama index project.
 
+![overview](docs/screenshots/osllmh_demo.gif)
+
 ## Installation
 
 ### Local Install
@@ -58,3 +60,19 @@ It also can be run locally by going to the dashboard folder and running below.
 ```python
 python app.py
 ```
+
+### Common Use Cases
+
+- start an engine class
+- run a query
+- update the index
+
+```python
+from osllmh.engine import Engine
+
+engine = Engine()
+response = engine.query("What is the capital of France?")
+response.response
+engine.update_index()
+```
+

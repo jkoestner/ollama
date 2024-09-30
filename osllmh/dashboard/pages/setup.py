@@ -14,7 +14,7 @@ from dash_extensions.enrich import (
 )
 
 from osllmh import engine
-from osllmh.dashboard.components import engine_store
+from osllmh.dashboard.components import dash_store
 from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
@@ -41,12 +41,19 @@ def layout():
                     dbc.CardBody(
                         [
                             dbc.Button(
-                                "Initialize Engine", id="initialize-engine-button"
+                                "Initialize Engine",
+                                id="initialize-engine-button",
+                                className="m-2",
+                            ),
+                            dbc.Button(
+                                "Update Index",
+                                id="update-index-button",
+                                className="m-2",
                             ),
                         ],
                     ),
                 ],
-                className="mb-4",
+                className="mb-2",
             ),
             dbc.Card(
                 [
@@ -70,10 +77,18 @@ def layout():
                                     ),
                                 ],
                             ),
+                            html.Div(
+                                id="settings-output",
+                                className="mt-3",
+                                style={
+                                    "whiteSpace": "pre-wrap",
+                                    "border": "1px solid #333333",
+                                },
+                            ),
                         ]
                     ),
                 ],
-                className="mb-4",
+                className="mb-2",
             ),
             dbc.Card(
                 [
@@ -198,6 +213,21 @@ def layout():
                                         ],
                                         className="mb-3",
                                     ),
+                                    html.H4("Engine"),
+                                    dbc.Row(
+                                        [
+                                            dbc.Label("Nodes", width=2),
+                                            dbc.Col(
+                                                dbc.Input(
+                                                    id="nodes-similar",
+                                                    type="number",
+                                                    placeholder="Enter a number",
+                                                ),
+                                                width=2,
+                                            ),
+                                        ],
+                                        className="mb-3",
+                                    ),
                                     dbc.Row(
                                         [
                                             dbc.Col(
@@ -241,10 +271,24 @@ def initialize_engine(n_clicks):
     """Initialize the engine."""
     if n_clicks is None:
         return dash.no_update
-    engine_store.engine_instance = engine.Engine()
+    dash_store.engine_instance = engine.Engine()
     engine_loaded = "loaded"
 
     return engine_loaded
+
+
+# update index
+@callback(
+    Input("update-index-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def update_index(n_clicks):
+    """Update the index."""
+    if n_clicks is None:
+        return
+    dash_store.engine_instance.update_index()
+
+    return
 
 
 # display current settings
@@ -255,8 +299,7 @@ def initialize_engine(n_clicks):
 )
 def display_current_settings(settings, pathname):
     """Display current settings."""
-    logger.info(f"engine_loaded: {engine_store.engine_instance}")
-    if engine_store.engine_instance is None:
+    if dash_store.engine_instance is None:
         return dash.no_update
     return json.dumps(settings, indent=4)
 
@@ -278,6 +321,7 @@ def display_current_settings(settings, pathname):
         State("chunk-overlap", "value"),
         State("context-window", "value"),
         State("num-output", "value"),
+        State("nodes-similar", "value"),
     ],
     prevent_initial_call=True,
 )
@@ -293,12 +337,13 @@ def update_settings(
     chunk_overlap,
     context_window,
     num_output,
+    nodes_similar,
 ):
     """Update settings."""
     if click_save is None and click_update is None and engine_loaded is None:
         logger.debug("No settings were updated.")
         return dash.no_update, dash.no_update
-    e = engine_store.engine_instance
+    e = dash_store.engine_instance
     if click_save:
         logger.info("Saving settings")
         settings = e.get_settings(save=True)
@@ -317,6 +362,7 @@ def update_settings(
             "text_splitter.chunk_overlap": chunk_overlap,
             "prompt_helper.context_window": context_window,
             "prompt_helper.num_output": num_output,
+            "engine.nodes_similar": nodes_similar,
         }
 
         for key, value in updates.items():
