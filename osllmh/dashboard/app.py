@@ -51,8 +51,29 @@ app = DashProxy(
 server = app.server
 app.config.suppress_callback_exceptions = True
 
-app.title = "osllmh Dashboard"
+app.title = "osllmh"
 app._favicon = "llm_logo.ico"
+# adding shortcut icons
+app.index_string = """
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        <link rel="manifest" href="/assets/manifest.json">
+        {%favicon%}
+        {%css%}
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+"""
 
 # creating the navbar
 page_links = [

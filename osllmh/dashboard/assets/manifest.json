@@ -1,0 +1,12 @@
+{
+    "short_name": "osllmh",
+    "name": "osllmh",
+    "icons": [
+      {
+        "src": "/assets/llm_192x192.png",
+        "sizes": "192x192",
+        "type": "image/png"
+      }
+    ]
+  }
+  

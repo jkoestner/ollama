@@ -7,25 +7,30 @@ The process is to:
   - Update the index with new documents by using a vector store and
     creates storage context.
     - The documents are read from a directory with a number of parameters
-  - Query the index with a question.
+  - Use a response synthesizer to create a response from the index.
+    - the response synthesizer has prompt templates
+  - Query the index with the response synthesizer.
     - The index are retrieved from a vector store
     - The response is then post-processed
 
 """
 
 import datetime
-import json
 import os
 import shutil
 from pathlib import Path
 
 import tiktoken
+import yaml
+from IPython.display import Markdown, display
 from llama_index.core import (
+    PromptTemplate,
     Settings,
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
     constants,
+    get_response_synthesizer,
     load_index_from_storage,
 )
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
@@ -71,7 +76,6 @@ class Engine:
         # initiate the variables
         self.index = None
         self.query_engine = None
-        self.query_log = []
 
         # initiate the directories
         if files_dir is None:
@@ -177,7 +181,46 @@ class Engine:
         logger.info("Index updated and persisted.")
         self.create_query_engine()
 
-    def create_query_engine(self, **kwargs):
+    def create_response_synthesizer(self, **kwargs):
+        """
+        Create the response synthesizer.
+
+        link:
+          - https://docs.llamaindex.ai/en/stable/module_guides/querying/response_synthesizers
+
+        Parameters
+        ----------
+        kwargs : dict
+            Additional keyword arguments to pass to the query engine.
+              - response_mode : str
+              The response mode to use.
+              default = "compact"
+              other options include: "refine", "tree_summarize"
+
+        Returns
+        -------
+        response_synthesizer : ResponseSynthesizer
+            The response synthesizer object.
+
+        """
+        if kwargs is None:
+            kwargs = {}
+
+        # set the option parameters
+        if "response_mode" not in kwargs:
+            kwargs["response_mode"] = self.settings["prompt_helper"]["response_mode"]
+
+        # create the response synthesizer
+        logger.info(
+            f"Creating response synthesizer with "
+            f"reponse_mode: {kwargs['response_mode']}..."
+        )
+        response_synthesizer = get_response_synthesizer(**kwargs)
+        self.response_synthesizer = response_synthesizer
+
+        return response_synthesizer
+
+    def create_query_engine(self, prompt_section=None, **kwargs):
         """
         Create the query engine from the index.
 
@@ -186,13 +229,23 @@ class Engine:
           - https://docs.llamaindex.ai/en/stable/api_reference/
           - https://docs.llamaindex.ai/en/stable/api_reference/retrievers/vector/#llama_index.core.retrievers.VectorIndexRetriever.similarity_top_k
           - https://docs.llamaindex.ai/en/stable/module_guides/querying/node_postprocessors/node_postprocessors/
+          - https://docs.llamaindex.ai/en/stable/module_guides/models/prompts/
+          - https://docs.llamaindex.ai/en/stable/examples/prompts/prompt_mixin/
+
 
         Parameters
         ----------
+        prompt_section : str, optional
+            The section of the prompt to use in the yaml
+            (e.g. "text_qa_template", "refine_template").
         kwargs : dict
             Additional keyword arguments to pass to the query engine.
-               - similarity_top_k : int
-                - node_postprocessors : list
+              - similarity_top_k : int
+                default = 2
+                how many similar nodes to return
+              - node_postprocessors : list
+                default = None
+                any further processing to nodes such as filtering
 
         Returns
         -------
@@ -202,13 +255,25 @@ class Engine:
         """
         if kwargs is None:
             kwargs = {}
-        logger.info("Creating query engine...")
+        if prompt_section is None:
+            prompt_section = self.settings["prompt_helper"].get("prompt_section", None)
+        self.create_response_synthesizer()
 
+        # set the option parameters
         if "similarity_top_k" not in kwargs:
             kwargs["similarity_top_k"] = self.settings["engine"]["nodes_similar"]
         if "node_postprocessors" not in kwargs:
             kwargs["node_postprocessors"] = None
-        self.query_engine = self.index.as_query_engine(**kwargs)
+
+        # create the query engine
+        logger.info("Creating query engine...")
+        self.query_engine = self.index.as_query_engine(
+            response_synthesizer=self.response_synthesizer, **kwargs
+        )
+
+        # creating a custom prompt
+        if prompt_section is not None:
+            self.update_prompts(prompt_section)
 
     def query(self, question, reset=True):
         """
@@ -302,16 +367,16 @@ class Engine:
         """
         Get the current settings of the engine.
 
-        to change settings, use the Settings class from llama_index and
+        To change settings, use the Settings class from llama_index and
         update the values.
 
-        reference:
+        Reference:
         https://docs.llamaindex.ai/en/stable/module_guides/supporting_modules/settings/
 
         Parameters
         ----------
         save : bool
-            Whether to save the settings to directory.
+            Whether to save the settings to a directory.
 
         Returns
         -------
@@ -349,10 +414,10 @@ class Engine:
         }
 
         if save:
-            output_dir = os.path.join(self.storage_dir, "settings.json")
+            output_dir = os.path.join(self.storage_dir, "settings.yaml")
             logger.info(f"Settings saved to {output_dir}")
             with open(output_dir, "w") as f:
-                json.dump(settings, f, indent=4)
+                yaml.dump(settings, f, default_flow_style=False)
 
         return settings
 
@@ -365,7 +430,7 @@ class Engine:
         settings_path : str or dict (optional)
             The file or dictionary containing the settings.
             If none, assumes the settings file is in the persist directory named
-            'settings.json'.
+            'settings.yml'.
 
         Returns
         -------
@@ -374,7 +439,7 @@ class Engine:
 
         """
         if settings_path is None:
-            settings_path = os.path.join(self.storage_dir, "settings.json")
+            settings_path = os.path.join(self.storage_dir, "settings.yml")
 
         # check if settings path is path or dictionary
         if isinstance(settings_path, dict):
@@ -383,14 +448,14 @@ class Engine:
             # check if the file exists
             if not os.path.exists(settings_path):
                 logger.warning(
-                    f"Settings file not found at {settings_path}, run "
-                    f"without 'settings' = 'True' if this is the first time"
+                    f"Settings file not found at {settings_path}. "
+                    f"Run without 'settings' = 'True' if this is the first time."
                 )
                 return
             # load the file
             logger.info("Loading settings...")
             with open(settings_path, "r") as f:
-                settings = json.load(f)
+                settings = yaml.safe_load(f)
 
         # update the settings
         Settings.llm.model = settings["llm"]["model"]
@@ -409,6 +474,15 @@ class Engine:
             self.create_query_engine()
 
         return settings
+
+    def display_prompt_dict(self):
+        """Display the prompts from the response synthesizer."""
+        prompts_dict = self.query_engine.get_prompts()
+        for k, p in prompts_dict.items():
+            text_md = f"**Prompt Key**: {k}<br>" f"**Text:** <br>"
+            display(Markdown(text_md))
+            print(p.get_template())
+            display(Markdown("<br><br>"))
 
     def _check_settings(self):
         """Check the current settings of the engine."""
@@ -497,6 +571,43 @@ class Engine:
         # prepend
         with open(self.log_file_path, "w") as log_file:
             log_file.write(new_log + existing_log)
+
+    def update_prompts(self, prompt_section):
+        """
+        Update the prompts from the 'prompts.yml'.
+
+        Parameters
+        ----------
+        prompt_section : str
+            The section of the prompt to use in the yaml
+            (e.g. "refine", "compact").
+
+        """
+        prompt_path = os.path.join(self.storage_dir, "prompts.yml")
+        # checks
+        if not os.path.exists(prompt_path):
+            logger.warning(
+                f"Prompt file not found at {prompt_path}. " f"Ensure file is available."
+            )
+            return None
+
+        with open(prompt_path, "r") as f:
+            prompts = yaml.safe_load(f)
+        if prompt_section not in prompts:
+            logger.warning(
+                f"Prompt section '{prompt_section}' not found. "
+                f"Ensure prompt section and prompt are available."
+            )
+            return None
+
+        # loop through the prompts
+        logger.info(f"Using custom prompt: {prompt_section}...")
+        for prompt in prompts[prompt_section]:
+            prompt_tmpl_str = prompts[prompt_section][prompt]
+            prompt_tmpl = PromptTemplate(prompt_tmpl_str)
+            self.query_engine.update_prompts(
+                {f"response_synthesizer:{prompt}": prompt_tmpl}
+            )
 
 
 class QueryResponse:
