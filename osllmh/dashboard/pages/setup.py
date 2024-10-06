@@ -213,6 +213,34 @@ def layout():
                                         ],
                                         className="mb-3",
                                     ),
+                                    dbc.Row(
+                                        [
+                                            dbc.Label("Response Mode", width=2),
+                                            dbc.Col(
+                                                dbc.Input(
+                                                    id="response-mode",
+                                                    type="text",
+                                                    placeholder="Enter a string",
+                                                ),
+                                                width=2,
+                                            ),
+                                        ],
+                                        className="mb-3",
+                                    ),
+                                    dbc.Row(
+                                        [
+                                            dbc.Label("Prompt Section", width=2),
+                                            dbc.Col(
+                                                dbc.Input(
+                                                    id="prompt-section",
+                                                    type="text",
+                                                    placeholder="Enter a string",
+                                                ),
+                                                width=2,
+                                            ),
+                                        ],
+                                        className="mb-3",
+                                    ),
                                     html.H4("Engine"),
                                     dbc.Row(
                                         [
@@ -321,6 +349,8 @@ def display_current_settings(settings, pathname):
         State("chunk-overlap", "value"),
         State("context-window", "value"),
         State("num-output", "value"),
+        State("response-mode", "value"),
+        State("prompt-section", "value"),
         State("nodes-similar", "value"),
     ],
     prevent_initial_call=True,
@@ -337,6 +367,8 @@ def update_settings(
     chunk_overlap,
     context_window,
     num_output,
+    response_mode,
+    prompt_section,
     nodes_similar,
 ):
     """Update settings."""
@@ -362,9 +394,12 @@ def update_settings(
             "text_splitter.chunk_overlap": chunk_overlap,
             "prompt_helper.context_window": context_window,
             "prompt_helper.num_output": num_output,
+            "prompt_helper.response_mode": response_mode,
+            "prompt_helper.prompt_section": prompt_section,
             "engine.nodes_similar": nodes_similar,
         }
 
+        # traversing the settings dict to update the values
         for key, value in updates.items():
             if value is not None:
                 keys = key.split(".")

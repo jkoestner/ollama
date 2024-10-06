@@ -385,12 +385,11 @@ class Engine:
 
         """
         # check user settings
-        if self.settings.get("engine", None) is None:
-            node_similar = constants.DEFAULT_SIMILARITY_TOP_K
-        else:
-            node_similar = self.settings["engine"].get(
-                "nodes_similar", constants.DEFAULT_SIMILARITY_TOP_K
-            )
+        node_similar = self.settings["engine"].get(
+            "nodes_similar", constants.DEFAULT_SIMILARITY_TOP_K
+        )
+        response_mode = self.settings["prompt_helper"].get("response_mode", "compact")
+        prompt_section = self.settings["prompt_helper"].get("prompt_section", "compact")
 
         # get the package settings
         settings = {
@@ -409,6 +408,8 @@ class Engine:
             "prompt_helper": {
                 "context_window": Settings.context_window,
                 "num_output": Settings.num_output,
+                "response_mode": response_mode,
+                "prompt_section": prompt_section,
             },
             "engine": {"nodes_similar": node_similar},
         }
@@ -557,7 +558,11 @@ class Engine:
         """
         # read
         with open(self.log_file_path, "r") as log_file:
-            existing_log = log_file.read()
+            existing_log = log_file.readlines()
+
+        max_lines = 10000
+        if len(existing_log) > max_lines:
+            existing_log = existing_log[:max_lines]
 
         # create log
         new_log = (
@@ -565,12 +570,16 @@ class Engine:
             f"Query: {query}\n"
             f"Response: {response}\n"
             f"Token Usage: {token_usage}\n"
+            f"Response Mode: {self.settings['prompt_helper']['response_mode']}\n"
+            f"Prompt Section: {self.settings['prompt_helper']['prompt_section']}\n"
             "---\n"  # Separator between entries
         )
 
+        updated_log = new_log + "".join(existing_log)
+
         # prepend
         with open(self.log_file_path, "w") as log_file:
-            log_file.write(new_log + existing_log)
+            log_file.write(updated_log)
 
     def update_prompts(self, prompt_section):
         """
@@ -703,15 +712,3 @@ class QueryResponse:
             return nodes[node_idx].node
 
         return None
-
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize the query engine
-    engine = Engine()
-
-    # Query the index
-    question = "What did the author do growing up?"
-    response = engine.query(question)
-    print("Question:", question)
-    print("Response:", response)
