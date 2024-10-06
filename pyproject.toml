@@ -20,6 +20,7 @@ dependencies = [
     "EbookLib>=0.18",                   # llama file reader dependency
     "gunicorn>=21.2.0",                 # only for dash
     "html2text>=2024.2.26",             # llama file reader dependency
+    "ipython>=8.18.1",
     "llama-index>=0.11.11",
     "llama-index-readers-file>=0.2.2",  # llama file reader dependency
     "openpyxl>=3.1.5",                  # llama file reader dependency
