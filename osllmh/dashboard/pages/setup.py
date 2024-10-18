@@ -19,7 +19,7 @@ from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
 
-dash.register_page(__name__, path="/", title="osllmh - Setup", order=1)
+dash.register_page(__name__, path="/", title="osllmh", order=1)
 
 #   _                            _
 #  | |    __ _ _   _  ___  _   _| |_
@@ -97,6 +97,21 @@ def layout():
                         [
                             dbc.Form(
                                 [
+                                    html.H4("Project"),
+                                    dbc.Row(
+                                        [
+                                            dbc.Label("Project Name", width=2),
+                                            dbc.Col(
+                                                dbc.Input(
+                                                    id="project-name",
+                                                    type="text",
+                                                    placeholder="Enter a project name",
+                                                ),
+                                                width=2,
+                                            ),
+                                        ],
+                                        className="mb-3",
+                                    ),
                                     html.H4("LLM"),
                                     dbc.Row(
                                         [
@@ -310,11 +325,11 @@ def initialize_engine(n_clicks):
     Input("update-index-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def update_index(n_clicks):
+def create_index(n_clicks):
     """Update the index."""
     if n_clicks is None:
         return
-    dash_store.engine_instance.update_index()
+    dash_store.engine_instance.create_index()
 
     return
 
@@ -341,6 +356,7 @@ def display_current_settings(settings, pathname):
         Input("engine-store", "data"),
     ],
     [
+        State("project-name", "value"),
         State("llm-model", "value"),
         State("llm-temperature", "value"),
         State("model-name", "value"),
@@ -359,6 +375,7 @@ def update_settings(
     click_save,
     click_update,
     engine_loaded,
+    project_name,
     llm_model,
     llm_temperature,
     model_name,
@@ -386,6 +403,7 @@ def update_settings(
         # loop through all the inputs and update the settings only
         # if the input is not None
         updates = {
+            "project.name": project_name,
             "llm.model": llm_model,
             "llm.temperature": llm_temperature,
             "embed_model.model_name": model_name,
@@ -408,7 +426,10 @@ def update_settings(
                     sub_settings = sub_settings[k]
                 sub_settings[keys[-1]] = value
 
-        e.load_settings(settings)
+        recreate_index = False
+        if project_name is not None:
+            recreate_index = True
+        e.update_settings(settings, recreate_index=recreate_index)
         return settings, "Settings updated!"
     if engine_loaded:
         logger.info("Loading settings")

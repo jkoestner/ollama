@@ -17,9 +17,9 @@ The process is to:
 
 import datetime
 import os
-import shutil
 from pathlib import Path
 
+import qdrant_client
 import tiktoken
 import yaml
 from IPython.display import Markdown, display
@@ -27,14 +27,13 @@ from llama_index.core import (
     PromptTemplate,
     Settings,
     SimpleDirectoryReader,
-    StorageContext,
-    VectorStoreIndex,
     constants,
     get_response_synthesizer,
-    load_index_from_storage,
 )
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+from llama_index.vector_stores.qdrant import QdrantVectorStore
 
+from osllmh import vector_stores
 from osllmh.utils import custom_logger
 
 logger = custom_logger.setup_logging(__name__)
@@ -55,51 +54,31 @@ class Engine:
         import osllmh
         e = osllmh.engine.Engine()
         response = e.query("Your question here")
-        e.update_index()
+        e.create_index()
         e.delete_index()
     """
 
-    def __init__(self, files_dir=None, storage_dir=None, load_settings=True):
-        """
-        Initialize the engine.
-
-        Parameters
-        ----------
-        files_dir : str
-            Directory where the documents are stored.
-        storage_dir : str
-            Directory where the index will be persisted.
-        load_settings : bool
-            Whether to load settings from a file.
-
-        """
+    def __init__(self):
+        """Initialize the engine."""
         # initiate the variables
         self.index = None
         self.query_engine = None
 
         # initiate the directories
-        if files_dir is None:
-            self.files_dir = os.path.join(OSLLMH_INPUTS_PATH, "files")
-        else:
-            self.files_dir = files_dir
-        if storage_dir is None:
-            self.storage_dir = os.path.join(OSLLMH_INPUTS_PATH, "storage")
-        else:
-            self.storage_dir = storage_dir
-        if load_settings:
-            self.load_settings()
-        else:
-            self.settings = self.get_settings()
-        self._check_settings()
-
-        self.index_dir = os.path.join(self.storage_dir, "index")
-
+        # storage
+        self.storage_dir = os.path.join(OSLLMH_INPUTS_PATH, "storage")
+        if not os.path.exists(self.storage_dir):
+            raise FileNotFoundError(f"Files directory not found at {self.storage_dir}")
+        # log
         self.log_file_path = os.path.join(self.storage_dir, "queries.log")
         if not os.path.exists(self.log_file_path):
             with open(self.log_file_path, "w") as f:
                 f.write("--- Query Log ---\n")
+        # settings
+        self.settings = self.update_settings(settings_path=None)
+        self._check_settings()
 
-        # create the engine
+        # create the index and query engine
         self.token_counter = self._setup_tokenizer()
         self.create_or_load_index()
 
@@ -116,16 +95,15 @@ class Engine:
 
         """
         # create index
-        if not os.path.exists(os.path.join(self.index_dir, "docstore.json")):
-            self.update_index(files_dir=self.files_dir)
+        if not self.vector_provider.check_index_exists():
+            self.create_index(files_dir=self.files_dir)
         # load index
         else:
-            storage_context = StorageContext.from_defaults(persist_dir=self.index_dir)
-            self.index = load_index_from_storage(storage_context)
-            logger.info("Index loaded from storage.")
+            logger.info("Loading existing index from storage...")
+            self.index = self.vector_provider.load_index()
             self.create_query_engine()
 
-    def update_index(self, files_dir=None):
+    def create_index(self, files_dir=None):
         """
         Update the index with new documents, supporting recursive directory traversal.
 
@@ -135,30 +113,31 @@ class Engine:
             New directory containing documents.
 
         """
-        if files_dir:
-            update_dir = files_dir
-        else:
-            update_dir = self.files_dir
+        update_dir = files_dir or self.files_dir
 
         logger.info(f"Updating index with new documents from {update_dir}...")
         documents = SimpleDirectoryReader(update_dir, recursive=True).load_data()
         unique_files = set()
 
         # create new index if doesn't exist
-        if not os.path.exists(os.path.join(self.index_dir, "docstore.json")):
-            logger.info("No existing index found. Creating a new index...")
+        if not self.vector_provider.check_index_exists():
+            logger.info(
+                f"No existing index found. Creating a new index "
+                f"with `{self.vector_type}`..."
+            )
             for document in documents:
                 doc_file_path = document.metadata.get("file_path", None)
                 if doc_file_path not in unique_files:
                     unique_files.add(doc_file_path)
             logger.info(f"Found {len(unique_files)} new documents.")
-            self.index = VectorStoreIndex.from_documents(documents)
-        # load existing index and add new documents
+            self.index = self.vector_provider.create_index(documents)
+        # adding to index
         else:
-            logger.info("Loading existing index from storage...")
-            storage_context = StorageContext.from_defaults(persist_dir=self.index_dir)
-            self.index = load_index_from_storage(storage_context)
-            existing_files = self.list_files_from_index()
+            logger.info(
+                f"Loading existing index from storage with " f"{self.vector_type}`..."
+            )
+            self.index = self.vector_provider.load_index()
+            existing_files = self.vector_provider.list_files_from_index(self.index)
             existing_file_paths = {
                 file_info["file_path"] for file_info in existing_files
             }
@@ -173,13 +152,13 @@ class Engine:
                         unique_files.add(doc_file_path)
 
             logger.info(f"Adding {len(unique_files)} new documents to the index...")
-            for document in new_documents:
-                self.index.insert(document)
+            self.index = self.vector_provider.update_index(self.index, new_documents)
 
         # Persist the updated index for future use
-        self.index.storage_context.persist(persist_dir=self.index_dir)
-        logger.info("Index updated and persisted.")
+        self.vector_provider.persist_index(self.index)
         self.create_query_engine()
+
+        return self.index
 
     def create_response_synthesizer(self, **kwargs):
         """
@@ -215,10 +194,9 @@ class Engine:
             f"Creating response synthesizer with "
             f"reponse_mode: {kwargs['response_mode']}..."
         )
-        response_synthesizer = get_response_synthesizer(**kwargs)
-        self.response_synthesizer = response_synthesizer
+        self.response_synthesizer = get_response_synthesizer(**kwargs)
 
-        return response_synthesizer
+        return self.response_synthesizer
 
     def create_query_engine(self, prompt_section=None, **kwargs):
         """
@@ -275,6 +253,8 @@ class Engine:
         if prompt_section is not None:
             self.update_prompts(prompt_section)
 
+        return self.query_engine
+
     def query(self, question, reset=True):
         """
         Query the index with the given question.
@@ -308,61 +288,6 @@ class Engine:
 
         return query_response
 
-    def delete_index(self):
-        """Delete the persisted index from storage."""
-        if os.path.exists(self.index_dir):
-            logger.info("Deleting the index from storage...")
-
-            shutil.rmtree(self.index_dir)
-            os.makedirs(self.index_dir)
-            self.index = None
-            self.query_engine = None
-            logger.info("Index deleted.")
-        else:
-            logger.info("No index found to delete.")
-
-    def list_files_from_index(self):
-        """
-        List the documents stored in the index.
-
-        Returns
-        -------
-        files_info : list
-            A list of file names stored in the index.
-
-        """
-        if not self.index:
-            logger.warning(
-                "Index not loaded or created. Please create or load the index first."
-            )
-            return []
-
-        # Access the document store from the storage context
-        storage_context = self.index.storage_context
-        document_store = storage_context.docstore
-
-        # Get all document objects
-        all_documents = document_store.docs
-
-        seen_files = set()
-
-        files_info = []
-        for doc_id, doc in all_documents.items():
-            # Get file name and path from metadata, with fallback to doc_id
-            # for missing fields
-            file_name = doc.metadata.get("file_name", f"Unknown file ({doc_id})")
-            file_path = doc.metadata.get("file_path", "Path not available")
-
-            # Create a tuple to uniquely identify the file by its name and path
-            file_identifier = (file_name, file_path)
-
-            # Only add if the file hasn't been seen before
-            if file_identifier not in seen_files:
-                files_info.append({"file_name": file_name, "file_path": file_path})
-                seen_files.add(file_identifier)
-
-        return files_info
-
     def get_settings(self, save=False):
         """
         Get the current settings of the engine.
@@ -390,9 +315,17 @@ class Engine:
         )
         response_mode = self.settings["prompt_helper"].get("response_mode", "compact")
         prompt_section = self.settings["prompt_helper"].get("prompt_section", "compact")
+        project_name = self.settings["project"].get("name", "default")
+        vector_type = self.settings["project"].get("vector_type", "base")
+        qdrant_url = self.settings["project"].get("qdrant_url", None)
 
         # get the package settings
         settings = {
+            "project": {
+                "name": project_name,
+                "vector_type": vector_type,
+                "qdrant_url": qdrant_url,
+            },
             "llm": {
                 "model": Settings.llm.model,
                 "temperature": Settings.llm.temperature,
@@ -413,16 +346,17 @@ class Engine:
             },
             "engine": {"nodes_similar": node_similar},
         }
+        self._update_directories(settings)
 
         if save:
-            output_dir = os.path.join(self.storage_dir, "settings.yaml")
+            output_dir = os.path.join(self.storage_dir, "settings.yml")
             logger.info(f"Settings saved to {output_dir}")
             with open(output_dir, "w") as f:
                 yaml.dump(settings, f, default_flow_style=False)
 
         return settings
 
-    def load_settings(self, settings_path=None):
+    def update_settings(self, settings_path=None, recreate_index=False):
         """
         Load settings from a file.
 
@@ -432,6 +366,8 @@ class Engine:
             The file or dictionary containing the settings.
             If none, assumes the settings file is in the persist directory named
             'settings.yml'.
+        recreate_index : bool (optional)
+            Whether to recreate the index after loading the settings.
 
         Returns
         -------
@@ -454,7 +390,6 @@ class Engine:
                 )
                 return
             # load the file
-            logger.info("Loading settings...")
             with open(settings_path, "r") as f:
                 settings = yaml.safe_load(f)
 
@@ -470,8 +405,28 @@ class Engine:
         Settings.num_output = settings["prompt_helper"]["num_output"]
 
         self.settings = settings
+        self._update_directories(settings)
+        self.project_name = self.settings["project"].get("name", "default")
+        self.vector_type = self.settings["project"].get("vector_type", "base")
+        qdrant_url = self.settings["project"].get("qdrant_url", None)
+        has_url = ", and url" if qdrant_url else None
+        self.vector_provider = vector_stores.VectorStore(
+            vector_type=self.vector_type,
+            index_dir=self.index_dir,
+            collection_name=self.project_name,
+            url=qdrant_url,
+        ).vector_provider
+        self.vector_store = self.vector_provider.vector_store
 
-        if self.index is not None:
+        logger.info(
+            f"Loaded settings with project: `{self.project_name}`, "
+            f"vector_type: `{self.vector_type}`{has_url}..."
+        )
+
+        # new settings will trigger a need to recreate the index and query engine
+        if recreate_index:
+            self.create_or_load_index()
+        elif self.index is not None:
             self.create_query_engine()
 
         return settings
@@ -485,20 +440,41 @@ class Engine:
             print(p.get_template())
             display(Markdown("<br><br>"))
 
-    def _check_settings(self):
-        """Check the current settings of the engine."""
-        settings = self.get_settings()
-        needed_settings = [
-            "llm",
-            "embed_model",
-            "text_splitter",
-            "prompt_helper",
-            "engine",
-        ]
-        missing_settings = [key for key in settings if key not in needed_settings]
-        if missing_settings:
-            raise ValueError(
-                f"Settings missing: {missing_settings}. Please update the settings."
+    def update_prompts(self, prompt_section):
+        """
+        Update the prompts from the 'prompts.yml'.
+
+        Parameters
+        ----------
+        prompt_section : str
+            The section of the prompt to use in the yaml
+            (e.g. "refine", "compact").
+
+        """
+        prompt_path = os.path.join(self.storage_dir, "prompts.yml")
+        # checks
+        if not os.path.exists(prompt_path):
+            logger.warning(
+                f"Prompt file not found at {prompt_path}. " f"Ensure file is available."
+            )
+            return None
+
+        with open(prompt_path, "r") as f:
+            prompts = yaml.safe_load(f)
+        if prompt_section not in prompts:
+            logger.warning(
+                f"Prompt section '{prompt_section}' not found. "
+                f"Ensure prompt section and prompt are available."
+            )
+            return None
+
+        # loop through the prompts
+        logger.info(f"Using custom prompt: {prompt_section}...")
+        for prompt in prompts[prompt_section]:
+            prompt_tmpl_str = prompts[prompt_section][prompt]
+            prompt_tmpl = PromptTemplate(prompt_tmpl_str)
+            self.query_engine.update_prompts(
+                {f"response_synthesizer:{prompt}": prompt_tmpl}
             )
 
     def reset_tokenizer(self):
@@ -531,6 +507,81 @@ class Engine:
             self.token_counter.reset_counts()
 
         return token_counts
+
+    def _check_settings(self):
+        """Check the current settings of the engine."""
+        settings = self.get_settings()
+        needed_settings = [
+            "project",
+            "llm",
+            "embed_model",
+            "text_splitter",
+            "prompt_helper",
+            "engine",
+        ]
+        missing_settings = [key for key in needed_settings if key not in settings]
+        if missing_settings:
+            raise ValueError(
+                f"Settings missing: {missing_settings}. Please update the settings."
+            )
+
+    def _get_vector_store(self, vector_type="base", collection_name=None):
+        """
+        Get the vector store for the index.
+
+        Parameters
+        ----------
+        vector_type : str (optional)
+            The type of vector store to use.
+        collection_name : str (optional)
+            The name of the collection to use (qdrant only).
+
+        Returns
+        -------
+        vector_store : object
+            The vector store object.
+
+        """
+        if vector_type == "base":
+            vector_store = None
+        elif vector_type == "qdrant":
+            client = qdrant_client.QdrantClient(location=":memory:")
+            vector_store = QdrantVectorStore(
+                client=client, collection_name=collection_name
+            )
+        else:
+            raise ValueError("Vector store not supported.")
+
+        return vector_store
+
+    def _update_directories(self, settings):
+        """
+        Update the directories for the engine.
+
+        Parameters
+        ----------
+        settings : dict
+            The settings of the engine.
+
+        Returns
+        -------
+        files_dir : str
+            The updated files directory.
+        index_dir : str
+            The updated index directory
+
+        """
+        self.project_name = settings["project"]["name"]
+        # files
+        self.files_dir = os.path.join(OSLLMH_INPUTS_PATH, "files", self.project_name)
+        if not os.path.exists(self.files_dir):
+            raise FileNotFoundError(f"Files directory not found at {self.files_dir}")
+        # index
+        self.index_dir = os.path.join(self.storage_dir, self.project_name)
+        if not os.path.exists(self.index_dir):
+            raise FileNotFoundError(f"Files directory not found at {self.index_dir}")
+
+        return self.files_dir, self.index_dir
 
     def _setup_tokenizer(self):
         """Set up the tokenizer for the engine."""
@@ -580,43 +631,6 @@ class Engine:
         # prepend
         with open(self.log_file_path, "w") as log_file:
             log_file.write(updated_log)
-
-    def update_prompts(self, prompt_section):
-        """
-        Update the prompts from the 'prompts.yml'.
-
-        Parameters
-        ----------
-        prompt_section : str
-            The section of the prompt to use in the yaml
-            (e.g. "refine", "compact").
-
-        """
-        prompt_path = os.path.join(self.storage_dir, "prompts.yml")
-        # checks
-        if not os.path.exists(prompt_path):
-            logger.warning(
-                f"Prompt file not found at {prompt_path}. " f"Ensure file is available."
-            )
-            return None
-
-        with open(prompt_path, "r") as f:
-            prompts = yaml.safe_load(f)
-        if prompt_section not in prompts:
-            logger.warning(
-                f"Prompt section '{prompt_section}' not found. "
-                f"Ensure prompt section and prompt are available."
-            )
-            return None
-
-        # loop through the prompts
-        logger.info(f"Using custom prompt: {prompt_section}...")
-        for prompt in prompts[prompt_section]:
-            prompt_tmpl_str = prompts[prompt_section][prompt]
-            prompt_tmpl = PromptTemplate(prompt_tmpl_str)
-            self.query_engine.update_prompts(
-                {f"response_synthesizer:{prompt}": prompt_tmpl}
-            )
 
 
 class QueryResponse:

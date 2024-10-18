@@ -73,6 +73,22 @@ from osllmh.engine import Engine
 engine = Engine()
 response = engine.query("What is the capital of France?")
 response.response
-engine.update_index()
+engine.create_index()
 ```
 
+## Other Tools
+### Jupyter Lab Usage
+
+To have conda environments work with Jupyter Notebooks a kernel needs to be defined. This can be done defining a kernel, shown below when
+in the conda environment.
+
+```
+python -m ipykernel install --user --name=osllmh
+```
+### Logging
+
+If wanting to get more detail in output of messages the logging can increased
+```python
+from osllmh.utils import config_helper
+config_helper.set_log_level("DEBUG")
+```
