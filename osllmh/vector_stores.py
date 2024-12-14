@@ -10,6 +10,8 @@ from llama_index.core import (
     load_index_from_storage,
 )
 from llama_index.vector_stores.qdrant import QdrantVectorStore
+from qdrant_client.http import models as rest
+from tqdm.auto import tqdm
 
 from osllmh.utils import custom_logger
 
@@ -35,16 +37,16 @@ class BaseVS:
 
     def check_index_exists(self):
         """Check if an index exists in the storage."""
-        return os.path.exists(os.path.join(self.index_dir, "docstore.json"))
+        exists_docstore = os.path.exists(os.path.join(self.index_dir, "docstore.json"))
+        exists_vector = os.path.exists(
+            os.path.join(self.index_dir, "default__vector_store.json")
+        )
+        exists = exists_docstore and exists_vector
+        return exists
 
-    def list_files_from_index(self, index):
+    def list_files_from_index(self):
         """
         List the documents stored in the index.
-
-        Parameters
-        ----------
-        index : VectorStoreIndex
-            The index to list the files from.
 
         Returns
         -------
@@ -52,7 +54,7 @@ class BaseVS:
             A list of file names stored in the index.
 
         """
-        storage_context = index.storage_context
+        storage_context = self.index.storage_context
         document_store = storage_context.docstore
         all_documents = document_store.docs
 
@@ -86,29 +88,17 @@ class BaseVS:
             The created index.
 
         """
+        # create index with first document
+        first_document = [documents[0]]
         storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         self.index = VectorStoreIndex.from_documents(
-            documents,
+            documents=first_document,
             storage_context=storage_context,
         )
 
-        return self.index
-
-    def load_index(self):
-        """
-        Load an index from a file.
-
-        Returns
-        -------
-        index : VectorStoreIndex
-            The loaded index.
-
-        """
-        storage_context = StorageContext.from_defaults(
-            vector_store=self.vector_store,
-            persist_dir=self.index_dir,
-        )
-        self.index = load_index_from_storage(storage_context)
+        # update index with remaining documents
+        if len(documents) > 1:
+            self.index = self.update_index(index=self.index, documents=documents[1:])
 
         return self.index
 
@@ -129,9 +119,29 @@ class BaseVS:
             The updated index.
 
         """
-        for document in documents:
-            index.insert(document)
+        with tqdm(total=len(documents), desc="Indexing documents") as pbar:
+            for document in documents:
+                index.insert(document)
+                pbar.update(1)
         self.index = index
+
+        return self.index
+
+    def load_index(self):
+        """
+        Load an index from a file.
+
+        Returns
+        -------
+        index : VectorStoreIndex
+            The loaded index.
+
+        """
+        storage_context = StorageContext.from_defaults(
+            vector_store=self.vector_store,
+            persist_dir=self.index_dir,
+        )
+        self.index = load_index_from_storage(storage_context)
 
         return self.index
 
@@ -179,11 +189,15 @@ class QdrantVS:
 
     def check_index_exists(self):
         """Check if an index exists in the storage."""
-        exists = os.path.exists(os.path.join(self.index_dir, "docstore.json"))
+        docstore_exists = os.path.exists(os.path.join(self.index_dir, "docstore.json"))
+        exists_vector = self.client.collection_exists(
+            collection_name=self.collection_name
+        )
+        exists = docstore_exists and exists_vector
 
         return exists
 
-    def list_files_from_index(self, index=None):
+    def list_files_from_index(self):
         """List the documents stored in the index."""
         scroll_position = None
         files_info = []
@@ -201,7 +215,8 @@ class QdrantVS:
                 file_path = point.payload.get("file_path")
                 if file_path and file_path not in file_paths:
                     file_paths.append(file_path)
-                    files_info.append({"file_path": file_path})
+                    doc_id = point.payload.get("doc_id")
+                    files_info.append({"file_path": file_path, "doc_id": doc_id})
 
             if not scroll_position:
                 break
@@ -223,11 +238,42 @@ class QdrantVS:
             The created index.
 
         """
+        # create index with first document
+        first_document = [documents[0]]
         storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         self.index = VectorStoreIndex.from_documents(
-            documents,
+            documents=first_document,
             storage_context=storage_context,
         )
+
+        # update index with remaining documents
+        if len(documents) > 1:
+            self.index = self.update_index(index=self.index, documents=documents[1:])
+
+        return self.index
+
+    def update_index(self, index, documents):
+        """
+        Update the index with new documents.
+
+        Parameters
+        ----------
+        index : VectorStoreIndex
+            The index to update.
+        documents : list
+            A list of documents to update the index with.
+
+        Returns
+        -------
+        index : VectorStoreIndex
+            The updated index.
+
+        """
+        with tqdm(total=len(documents), desc="Indexing documents") as pbar:
+            for document in documents:
+                index.insert(document)
+                pbar.update(1)
+        self.index = index
 
         return self.index
 
@@ -249,31 +295,6 @@ class QdrantVS:
 
         return self.index
 
-    def update_index(self, index, documents):
-        """
-        Update the index with new documents.
-
-        Parameters
-        ----------
-        index : VectorStoreIndex
-            The index to update.
-        documents : list
-            A list of documents to update the index with.
-
-        Returns
-        -------
-        index : VectorStoreIndex
-            The updated index.
-
-        """
-        storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
-        self.index = VectorStoreIndex.from_documents(
-            documents,
-            storage_context=storage_context,
-        )
-
-        return self.index
-
     def delete_index(self):
         """Delete the persisted index from storage."""
         if os.path.exists(self.index_dir):
@@ -288,6 +309,29 @@ class QdrantVS:
             logger.info("Index deleted.")
         else:
             logger.info("No index found to delete.")
+
+    def delete_document(self, doc_id):
+        """
+        Delete a document from the index.
+
+        Parameters
+        ----------
+        doc_id : str
+            The ID of the document to delete.
+
+        """
+        logger.info(f"Deleting document with doc_id: {doc_id}")
+
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=rest.Filter(
+                must=[
+                    rest.FieldCondition(
+                        key="doc_id", match=rest.MatchValue(value=doc_id)
+                    )
+                ]
+            ),
+        )
 
     def persist_index(self, index):
         """

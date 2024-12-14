@@ -137,7 +137,7 @@ class Engine:
                 f"Loading existing index from storage with " f"{self.vector_type}`..."
             )
             self.index = self.vector_provider.load_index()
-            existing_files = self.vector_provider.list_files_from_index(self.index)
+            existing_files = self.vector_provider.list_files_from_index()
             existing_file_paths = {
                 file_info["file_path"] for file_info in existing_files
             }
