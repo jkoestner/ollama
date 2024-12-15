@@ -55,10 +55,10 @@ CLI can be used for easier commands of python scripts for both portfolio or mana
 osllmh dashboard
 ```
 
-It also can be run locally by going to the dashboard folder and running below.
+It also can be run locally by going to the root folder and running below.
 
 ```python
-python app.py
+python -m osllmh.dashboard.app
 ```
 
 ### Common Use Cases
